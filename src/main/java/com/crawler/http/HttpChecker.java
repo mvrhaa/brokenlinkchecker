@@ -3,13 +3,17 @@ package com.crawler.http;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
+import java.nio.channels.UnresolvedAddressException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Optional;
+
+import javax.net.ssl.SSLException;
 
 public class HttpChecker {
 
@@ -70,8 +74,13 @@ public class HttpChecker {
             return HttpResult.failure(startUrl, "Too many redirects");
         } catch (HttpTimeoutException e) {
             return HttpResult.failure(startUrl, "Timeout");
+        } catch (SSLException e) {
+            return HttpResult.failure(startUrl, "SSL error");
         } catch (IOException e) {
-            return HttpResult.failure(startUrl, "Connection failed: " + describe(e));
+            if (isUnknownHost(e)) {
+                return HttpResult.failure(startUrl, "Unknown host");
+            }
+            return HttpResult.failure(startUrl, "Connection failed");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return HttpResult.failure(startUrl, "Interrupted");
@@ -98,10 +107,14 @@ public class HttpChecker {
         }
     }
 
-    private String describe(IOException e) {
-        if (e.getMessage() != null) {
-            return e.getMessage();
+    private boolean isUnknownHost(IOException e) {
+        Throwable cause = e;
+        while (cause != null) {
+            if (cause instanceof UnknownHostException || cause instanceof UnresolvedAddressException) {
+                return true;
+            }
+            cause = cause.getCause();
         }
-        return e.getClass().getSimpleName();
+        return false;
     }
 }

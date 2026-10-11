@@ -33,6 +33,20 @@ class ArgumentParserTest {
     }
 
     @Test
+    void reportGoesToCurrentFolderByDefault() {
+        CrawlerConfig config = parser.parse(new String[] {"https://example.com"});
+
+        assertEquals(".", config.getOutputDirectory().toString());
+    }
+
+    @Test
+    void readsOutputFolder() {
+        CrawlerConfig config = parser.parse(new String[] {"https://example.com", "--output", "reports"});
+
+        assertEquals("reports", config.getOutputDirectory().toString());
+    }
+
+    @Test
     void optionsCanComeBeforeTheUrl() {
         CrawlerConfig config = parser.parse(new String[] {"--depth", "1", "http://example.com"});
 

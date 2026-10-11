@@ -1,6 +1,7 @@
 package com.crawler.config;
 
 import java.net.URI;
+import java.nio.file.Path;
 
 public class CrawlerConfig {
 
@@ -12,12 +13,14 @@ public class CrawlerConfig {
     private final int maxDepth;
     private final int threads;
     private final long delayMillis;
+    private final Path outputDirectory;
 
-    public CrawlerConfig(URI rootUrl, int maxDepth, int threads, long delayMillis) {
+    public CrawlerConfig(URI rootUrl, int maxDepth, int threads, long delayMillis, Path outputDirectory) {
         this.rootUrl = rootUrl;
         this.maxDepth = maxDepth;
         this.threads = threads;
         this.delayMillis = delayMillis;
+        this.outputDirectory = outputDirectory;
     }
 
     public URI getRootUrl() {
@@ -34,5 +37,9 @@ public class CrawlerConfig {
 
     public long getDelayMillis() {
         return delayMillis;
+    }
+
+    public Path getOutputDirectory() {
+        return outputDirectory;
     }
 }

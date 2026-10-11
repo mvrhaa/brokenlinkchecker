@@ -1,9 +1,14 @@
 package com.crawler.core;
 
 import java.net.URI;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -13,6 +18,8 @@ import com.crawler.config.CrawlerConfig;
 import com.crawler.http.HttpChecker;
 import com.crawler.http.HttpResult;
 import com.crawler.parser.LinkExtractor;
+import com.crawler.report.BrokenLink;
+import com.crawler.report.BrokenLinkDetector;
 import com.crawler.util.UrlUtils;
 
 public class WebCrawler {
@@ -21,8 +28,11 @@ public class WebCrawler {
     private final HttpChecker httpChecker;
     private final LinkExtractor linkExtractor;
     private final RateLimiter rateLimiter;
+    private final BrokenLinkDetector detector = new BrokenLinkDetector();
 
     private final Set<URI> visited = ConcurrentHashMap.newKeySet();
+    private final Map<URI, Set<URI>> sourcePages = new ConcurrentHashMap<>();
+    private final Queue<HttpResult> brokenResults = new ConcurrentLinkedQueue<>();
     private final AtomicInteger pendingTasks = new AtomicInteger();
     private final AtomicInteger pagesCrawled = new AtomicInteger();
     private final AtomicInteger linksChecked = new AtomicInteger();
@@ -53,7 +63,7 @@ public class WebCrawler {
         }
 
         long duration = System.currentTimeMillis() - start;
-        return new CrawlSummary(pagesCrawled.get(), linksChecked.get(), duration);
+        return new CrawlSummary(pagesCrawled.get(), linksChecked.get(), duration, collectBrokenLinks());
     }
 
     public Set<URI> getVisitedUrls() {
@@ -82,7 +92,7 @@ public class WebCrawler {
 
         HttpResult result = httpChecker.fetchPage(url);
         pagesCrawled.incrementAndGet();
-        printResult(result, url);
+        record(result, url);
 
         if (depth == 0 && !result.hasError()) {
             siteUrl = result.getUrl();
@@ -94,6 +104,7 @@ public class WebCrawler {
         visited.add(result.getUrl());
         List<URI> links = linkExtractor.extractLinks(result.getBody(), result.getUrl());
         for (URI link : links) {
+            sourcePages.computeIfAbsent(link, key -> ConcurrentHashMap.newKeySet()).add(result.getUrl());
             if (!visited.add(link)) {
                 continue;
             }
@@ -113,7 +124,36 @@ public class WebCrawler {
 
         HttpResult result = httpChecker.check(url);
         linksChecked.incrementAndGet();
-        printResult(result, url);
+        record(result, url);
+    }
+
+    private void record(HttpResult result, URI requestedUrl) {
+        if (detector.isBroken(result)) {
+            brokenResults.add(HttpResult.copyFor(requestedUrl, result));
+        }
+        printResult(result, requestedUrl);
+    }
+
+    private List<BrokenLink> collectBrokenLinks() {
+        List<BrokenLink> brokenLinks = new ArrayList<>();
+
+        for (HttpResult result : brokenResults) {
+            String reason = detector.describeProblem(result);
+            Set<URI> sources = sourcePages.get(result.getUrl());
+
+            if (sources == null) {
+                brokenLinks.add(new BrokenLink("(start URL)", result.getUrl().toString(),
+                        result.getStatusCode(), reason));
+                continue;
+            }
+            for (URI source : sources) {
+                brokenLinks.add(new BrokenLink(source.toString(), result.getUrl().toString(),
+                        result.getStatusCode(), reason));
+            }
+        }
+
+        brokenLinks.sort(Comparator.comparing(BrokenLink::getSourcePage).thenComparing(BrokenLink::getUrl));
+        return brokenLinks;
     }
 
     private boolean waitForTurn() {
