@@ -11,6 +11,7 @@ import java.net.ServerSocket;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.concurrent.Executors;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +28,7 @@ class HttpCheckerTest {
     @BeforeEach
     void startServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.setExecutor(Executors.newFixedThreadPool(4));
 
         server.createContext("/ok", exchange -> respond(exchange, 200, "text/html", "<a href='/next'>next</a>"));
         server.createContext("/missing", exchange -> respond(exchange, 404, "text/html", "not found"));
@@ -43,6 +45,16 @@ class HttpCheckerTest {
             } else {
                 respond(exchange, 200, "text/html", "works with GET");
             }
+        });
+        server.createContext("/slow-head", exchange -> {
+            if (exchange.getRequestMethod().equals("HEAD")) {
+                try {
+                    Thread.sleep(2000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            respond(exchange, 200, "text/html", "works with GET");
         });
         server.createContext("/slow", exchange -> {
             try {
@@ -115,6 +127,13 @@ class HttpCheckerTest {
     @Test
     void usesGetWhenServerDoesNotAllowHead() {
         HttpResult result = checker.check(url("/no-head"));
+
+        assertEquals(200, result.getStatusCode());
+    }
+
+    @Test
+    void usesGetWhenHeadTimesOut() {
+        HttpResult result = checker.check(url("/slow-head"));
 
         assertEquals(200, result.getStatusCode());
     }

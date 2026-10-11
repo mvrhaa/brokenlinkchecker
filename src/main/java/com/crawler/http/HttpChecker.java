@@ -35,10 +35,10 @@ public class HttpChecker {
 
     public HttpResult check(URI url) {
         HttpResult result = send("HEAD", url, false);
-        if (result.getStatusCode() == 405 || result.getStatusCode() == 501) {
-            return send("GET", url, false);
+        if (result.isSuccess()) {
+            return result;
         }
-        return result;
+        return send("GET", url, false);
     }
 
     public HttpResult fetchPage(URI url) {

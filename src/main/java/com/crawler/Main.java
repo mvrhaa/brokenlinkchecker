@@ -2,6 +2,10 @@ package com.crawler;
 
 import com.crawler.config.ArgumentParser;
 import com.crawler.config.CrawlerConfig;
+import com.crawler.core.CrawlSummary;
+import com.crawler.core.WebCrawler;
+import com.crawler.http.HttpChecker;
+import com.crawler.parser.LinkExtractor;
 
 public class Main {
 
@@ -24,9 +28,23 @@ public class Main {
             return;
         }
 
-        System.out.println("Start URL: " + config.getRootUrl());
-        System.out.println("Max depth: " + config.getMaxDepth());
-        System.out.println("Threads:   " + config.getThreads());
-        System.out.println("Delay:     " + config.getDelayMillis() + " ms");
+        System.out.println("Crawling " + config.getRootUrl()
+                + " (depth " + config.getMaxDepth()
+                + ", " + config.getThreads() + " threads"
+                + ", " + config.getDelayMillis() + " ms between requests)");
+        System.out.println();
+
+        WebCrawler crawler = new WebCrawler(config, new HttpChecker(), new LinkExtractor());
+        try {
+            CrawlSummary summary = crawler.crawl();
+            System.out.println();
+            System.out.println("Pages crawled: " + summary.getPagesCrawled());
+            System.out.println("Links checked: " + summary.getLinksChecked());
+            System.out.println("Time:          " + summary.getDurationMillis() / 1000.0 + " s");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            System.err.println("Crawl was interrupted");
+            System.exit(1);
+        }
     }
 }
