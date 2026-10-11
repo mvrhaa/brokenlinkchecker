@@ -24,6 +24,10 @@ public class HttpResult {
         return new HttpResult(url, 0, null, error);
     }
 
+    public static HttpResult copyFor(URI url, HttpResult other) {
+        return new HttpResult(url, other.statusCode, null, other.error);
+    }
+
     public boolean isSuccess() {
         return error == null && statusCode >= 200 && statusCode < 300;
     }

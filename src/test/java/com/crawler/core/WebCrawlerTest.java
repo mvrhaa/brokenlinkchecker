@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -24,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import com.crawler.config.CrawlerConfig;
 import com.crawler.http.HttpChecker;
 import com.crawler.parser.LinkExtractor;
+import com.crawler.report.BrokenLink;
 import com.sun.net.httpserver.HttpServer;
 
 class WebCrawlerTest {
@@ -54,7 +56,22 @@ class WebCrawlerTest {
 
             String html = pages.get(path);
             exchange.getResponseHeaders().set("Content-Type", "text/html");
-            if (html == null) {
+            if (path.equals("/server-error")) {
+                exchange.sendResponseHeaders(500, -1);
+            } else if (path.startsWith("/loop")) {
+                exchange.getResponseHeaders().set("Location", path.equals("/loop-a") ? "/loop-b" : "/loop-a");
+                exchange.sendResponseHeaders(302, -1);
+            } else if (path.equals("/moved")) {
+                exchange.getResponseHeaders().set("Location", "/a");
+                exchange.sendResponseHeaders(301, -1);
+            } else if (path.equals("/very-slow")) {
+                try {
+                    Thread.sleep(3000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                exchange.sendResponseHeaders(200, -1);
+            } else if (html == null) {
                 exchange.sendResponseHeaders(404, -1);
             } else if (method.equals("HEAD")) {
                 exchange.sendResponseHeaders(200, -1);
@@ -223,12 +240,123 @@ class WebCrawlerTest {
                 "9 pages of 300 ms each took " + summary.getDurationMillis() + " ms, so they did not run in parallel");
     }
 
+    @Test
+    void siteWithoutProblemsHasNoBrokenLinks() throws InterruptedException {
+        pages.put("/", links("/a", "/moved"));
+        pages.put("/a", links("/"));
+
+        CrawlSummary summary = crawl(3, 4, 0);
+
+        assertTrue(summary.getBrokenLinks().isEmpty());
+    }
+
+    @Test
+    void reportsMissingPageWithItsSourcePage() throws InterruptedException {
+        pages.put("/", links("/a"));
+        pages.put("/a", links("/gone"));
+
+        CrawlSummary summary = crawl(3, 4, 0);
+
+        assertEquals(1, summary.getBrokenLinks().size());
+        BrokenLink broken = summary.getBrokenLinks().get(0);
+        assertEquals(siteUrl() + "/a", broken.getSourcePage());
+        assertEquals(siteUrl() + "/gone", broken.getUrl());
+        assertEquals(404, broken.getStatusCode());
+        assertEquals("Not Found", broken.getReason());
+    }
+
+    @Test
+    void reportsEveryPageThatContainsTheBrokenLink() throws InterruptedException {
+        pages.put("/", links("/a", "/b", "/gone"));
+        pages.put("/a", links("/gone"));
+        pages.put("/b", links("/gone"));
+
+        CrawlSummary summary = crawl(3, 4, 0);
+
+        assertEquals(3, summary.getBrokenLinks().size());
+        assertEquals(List.of(siteUrl() + "/", siteUrl() + "/a", siteUrl() + "/b"),
+                summary.getBrokenLinks().stream().map(BrokenLink::getSourcePage).toList());
+        assertEquals(1, count("GET /gone") + count("HEAD /gone"));
+    }
+
+    @Test
+    void reportsServerErrors() throws InterruptedException {
+        pages.put("/", links("/server-error"));
+
+        CrawlSummary summary = crawl(0, 4, 0);
+
+        assertEquals(1, summary.getBrokenLinks().size());
+        assertEquals(500, summary.getBrokenLinks().get(0).getStatusCode());
+        assertEquals("Internal Server Error", summary.getBrokenLinks().get(0).getReason());
+    }
+
+    @Test
+    void reportsRedirectLoops() throws InterruptedException {
+        pages.put("/", links("/loop-a"));
+
+        CrawlSummary summary = crawl(2, 4, 0);
+
+        assertEquals(1, summary.getBrokenLinks().size());
+        assertEquals(siteUrl() + "/loop-a", summary.getBrokenLinks().get(0).getUrl());
+        assertEquals(0, summary.getBrokenLinks().get(0).getStatusCode());
+        assertEquals("Too many redirects", summary.getBrokenLinks().get(0).getReason());
+    }
+
+    @Test
+    void reportsTimeouts() throws InterruptedException {
+        pages.put("/", links("/very-slow"));
+
+        CrawlerConfig config = new CrawlerConfig(URI.create(siteUrl() + "/"), 0, 4, 0, Path.of("."));
+        WebCrawler crawler = new WebCrawler(config, new HttpChecker(Duration.ofMillis(500)), new LinkExtractor());
+        CrawlSummary summary = crawler.crawl();
+
+        assertEquals(1, summary.getBrokenLinks().size());
+        assertEquals("Timeout", summary.getBrokenLinks().get(0).getReason());
+    }
+
+    @Test
+    void reportsUnknownHosts() throws InterruptedException {
+        pages.put("/", "<a href='http://this-host-does-not-exist.invalid/page'>dead site</a>");
+
+        CrawlSummary summary = crawl(2, 4, 0);
+
+        assertEquals(1, summary.getBrokenLinks().size());
+        assertEquals("http://this-host-does-not-exist.invalid/page", summary.getBrokenLinks().get(0).getUrl());
+        assertEquals("Unknown host", summary.getBrokenLinks().get(0).getReason());
+    }
+
+    @Test
+    void reportsUnreachableStartUrl() {
+        server.stop(0);
+
+        CrawlSummary summary = assertTimeoutPreemptively(Duration.ofSeconds(10), () -> crawl(3, 4, 0));
+
+        assertEquals(1, summary.getBrokenLinks().size());
+        assertEquals("(start URL)", summary.getBrokenLinks().get(0).getSourcePage());
+        assertEquals("Connection failed", summary.getBrokenLinks().get(0).getReason());
+    }
+
+    @Test
+    void collectsBrokenLinksFromManyThreads() throws InterruptedException {
+        StringBuilder rootLinks = new StringBuilder();
+        for (int i = 0; i < 40; i++) {
+            pages.put("/page" + i, links("/gone" + i));
+            rootLinks.append("<a href='/page").append(i).append("'>page</a>");
+        }
+        pages.put("/", rootLinks.toString());
+
+        CrawlSummary summary = crawl(2, 8, 0);
+
+        assertEquals(40, summary.getBrokenLinks().size());
+    }
+
     private CrawlSummary crawl(int maxDepth, int threads, long delayMillis) throws InterruptedException {
         return newCrawler(maxDepth, threads, delayMillis).crawl();
     }
 
     private WebCrawler newCrawler(int maxDepth, int threads, long delayMillis) {
-        CrawlerConfig config = new CrawlerConfig(URI.create(siteUrl() + "/"), maxDepth, threads, delayMillis);
+        CrawlerConfig config = new CrawlerConfig(URI.create(siteUrl() + "/"), maxDepth, threads, delayMillis,
+                Path.of("."));
         return new WebCrawler(config, new HttpChecker(Duration.ofSeconds(5)), new LinkExtractor());
     }
 

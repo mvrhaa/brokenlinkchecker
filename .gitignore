@@ -1,4 +1,5 @@
 target/
+broken-links-*.csv
 .idea/
 *.iml
 .vscode/

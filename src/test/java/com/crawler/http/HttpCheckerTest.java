@@ -156,15 +156,15 @@ class HttpCheckerTest {
         HttpResult result = checker.check(URI.create("http://localhost:" + freePort + "/"));
 
         assertTrue(result.hasError());
-        assertTrue(result.getError().startsWith("Connection failed"));
+        assertEquals("Connection failed", result.getError());
     }
 
     @Test
-    void unknownHostIsReportedAsConnectionFailure() {
+    void unknownHostIsReported() {
         HttpResult result = checker.check(URI.create("http://this-host-does-not-exist.invalid/"));
 
         assertTrue(result.hasError());
-        assertFalse(result.isSuccess());
+        assertEquals("Unknown host", result.getError());
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.crawler.config;
 
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.file.Path;
 
 public class ArgumentParser {
 
@@ -12,6 +13,7 @@ public class ArgumentParser {
               --depth <n>     how many links deep to crawl from the start page (default 2)
               --threads <n>   number of pages to crawl at the same time (default 8)
               --delay <ms>    pause between requests in milliseconds (default 200)
+              --output <dir>  folder for the CSV report (default: current folder)
               --help          show this message
 
             Example:
@@ -23,6 +25,7 @@ public class ArgumentParser {
         int maxDepth = CrawlerConfig.DEFAULT_MAX_DEPTH;
         int threads = CrawlerConfig.DEFAULT_THREADS;
         long delayMillis = CrawlerConfig.DEFAULT_DELAY_MILLIS;
+        Path outputDirectory = Path.of(".");
 
         for (int i = 0; i < args.length; i++) {
             String arg = args[i];
@@ -35,6 +38,9 @@ public class ArgumentParser {
                 i++;
             } else if (arg.equals("--delay")) {
                 delayMillis = parseNumber(arg, valueAfter(args, i), 0, 60_000);
+                i++;
+            } else if (arg.equals("--output")) {
+                outputDirectory = Path.of(valueAfter(args, i));
                 i++;
             } else if (arg.startsWith("--")) {
                 throw new IllegalArgumentException("Unknown option: " + arg);
@@ -49,7 +55,7 @@ public class ArgumentParser {
             throw new IllegalArgumentException("The URL to crawl is missing");
         }
 
-        return new CrawlerConfig(parseUrl(url), maxDepth, threads, delayMillis);
+        return new CrawlerConfig(parseUrl(url), maxDepth, threads, delayMillis, outputDirectory);
     }
 
     public boolean isHelpRequested(String[] args) {
